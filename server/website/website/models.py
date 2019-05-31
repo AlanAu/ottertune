@@ -191,7 +191,13 @@ class Session(BaseModel):
     last_update = models.DateTimeField()
 
     upload_code = models.CharField(max_length=30, unique=True)
-    tuning_session = models.BooleanField()
+    TUNING_OPTIONS = [
+        ("tuning_session", "Tuning Session"),
+        ("no_tuning_session", "No Tuning"),
+        ("randomly_generate", "Randomly Generate")
+    ]
+    tuning_session = models.CharField(choices=TUNING_OPTIONS,
+                                      max_length=64, default='tuning_sesion')
 
     TARGET_OBJECTIVES = [
         ('throughput_txn_per_sec', 'Throughput'),
@@ -201,11 +207,8 @@ class Session(BaseModel):
     nondefault_settings = models.TextField(null=True)
 
     def clean(self):
-        if self.tuning_session:
-            if self.target_objective is None:
-                self.target_objective = MetricManager.get_default_objective_function()
-        else:
-            self.target_objective = None
+        if self.target_objective is None:
+            self.target_objective = MetricManager.get_default_objective_function()
 
     def delete(self, using=DEFAULT_DB_ALIAS, keep_parents=False):
         targets = KnobData.objects.filter(session=self)
@@ -299,6 +302,18 @@ class Workload(BaseModel):
     dbms = models.ForeignKey(DBMSCatalog)
     hardware = models.ForeignKey(Hardware)
     name = models.CharField(max_length=128, verbose_name='workload name')
+
+    def delete(self, using=DEFAULT_DB_ALIAS, keep_parents=False):
+        # The results should not have corresponding workloads.
+        # results = Result.objects.filter(workload=self)
+        # if results.exists():
+        #     raise Exception("Cannot delete {} workload since results exist. ".format(self.name))
+
+        # Delete PipelineData with corresponding workloads
+        pipelinedatas = PipelineData.objects.filter(workload=self)
+        for x in pipelinedatas:
+            x.delete()
+        super(Workload, self).delete(using, keep_parents)
 
     class Meta:  # pylint: disable=old-style-class,no-init
         unique_together = ("dbms", "hardware", "name")

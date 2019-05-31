@@ -5,6 +5,7 @@
 #
 import logging
 import datetime
+import re
 from collections import OrderedDict
 
 from django.contrib.auth import login, logout
@@ -401,6 +402,13 @@ def handle_result_files(session, files):
         # int(summary['end_time']), # unit: seconds
         int(summary['end_time']) / 1000,  # unit: ms
         timezone(TIME_ZONE))
+
+    # Check if workload name only contains alpha-numeric, underscore and hyphen
+    if not re.match('^[a-zA-Z0-9_-]+$', workload_name):
+        return HttpResponse('Your workload name ' + workload_name + ' contains '
+                            'invalid characters! It should only contain '
+                            'alpha-numeric, underscore(_) and hyphen(-)')
+
     try:
         # Check that we support this DBMS and version
         dbms = DBMSCatalog.objects.get(
@@ -467,7 +475,7 @@ def handle_result_files(session, files):
     session.project.save()
     session.save()
 
-    if session.tuning_session is False:
+    if session.tuning_session == 'no_tuning_session':
         return HttpResponse("Result stored successfully!")
 
     result_id = result.pk

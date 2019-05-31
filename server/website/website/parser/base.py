@@ -164,10 +164,12 @@ class BaseParser(object, metaclass=ABCMeta):
         metric_data = {}
         for name, metadata in list(self.numeric_metric_catalog_.items()):
             value = metrics[name]
-            if metadata.metric_type == MetricType.COUNTER or \
-                    metadata.metric_type == MetricType.STATISTICS:
+            if metadata.metric_type == MetricType.COUNTER:
                 converted = self.convert_integer(value, metadata)
                 metric_data[name] = float(converted) / observation_time
+            elif metadata.metric_type == MetricType.STATISTICS:
+                converted = self.convert_integer(value, metadata)
+                metric_data[name] = float(converted)
             else:
                 raise Exception(
                     'Unknown metric type for {}: {}'.format(name, metadata.metric_type))
@@ -297,7 +299,7 @@ class BaseParser(object, metaclass=ABCMeta):
                     adj_val = end_val - start_val
                 else:  # MetricType.STATISTICS or MetricType.INFO
                     adj_val = end_val
-                assert adj_val >= 0
+                assert adj_val >= 0, '{} wrong metric type '.format(met_name)
                 adjusted_metrics[met_name] = adj_val
             else:
                 # This metric is either a bool, enum, string, or timestamp

@@ -292,6 +292,7 @@ class DummyEncoder(Preprocess):
             if nv <= 2:
                 raise Exception("Categorical features must have 3+ labels")
 
+        self.n_values = n_values
         self.cat_columnlabels = cat_columnlabels
         self.noncat_columnlabels = noncat_columnlabels
         self.encoder = OneHotEncoder(
@@ -329,7 +330,12 @@ class DummyEncoder(Preprocess):
         return self.transform(matrix)
 
     def inverse_transform(self, matrix, copy=True):
-        n_values = self.encoder.n_values_
+        n_values = self.n_values
+        # If there are no categorical variables, no transformation happened.
+        if len(n_values) == 0:
+            return matrix
+
+        # Otherwise, this is a dummy-encoded matrix. Transform it back to original form.
         n_features = matrix.shape[-1] - self.encoder.feature_indices_[-1] + len(n_values)
         noncat_start_idx = self.encoder.feature_indices_[-1]
         inverted_matrix = np.empty((matrix.shape[0], n_features))
@@ -350,7 +356,7 @@ class DummyEncoder(Preprocess):
         return inverted_matrix
 
     def total_dummies(self):
-        return sum(self.encoder.n_values_)
+        return sum(self.n_values)
 
 
 def consolidate_columnlabels(columnlabels):

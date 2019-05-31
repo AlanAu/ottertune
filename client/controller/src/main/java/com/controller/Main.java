@@ -54,6 +54,7 @@ public class Main {
   private static final int TO_MILLISECONDS = 1000;
 
   private static boolean keepRunning = true;
+  private static boolean firstCollecting = false;
 
   public static void main(String[] args) {
 
@@ -63,6 +64,9 @@ public class Main {
     // Initialize keepRunning
     keepRunning = true;
 
+    // Initialize firstCollecting
+    firstCollecting = false;
+    
     // Create the command line parser
     CommandLineParser parser = new PosixParser();
     Options options = new Options();
@@ -130,6 +134,31 @@ public class Main {
 
     DBCollector collector = getCollector(config);
     try {
+      // add a signal handler
+      Signal.handle(new Signal("INT"), signal -> firstCollecting = true);
+      File f = new File("pid.txt");
+
+      // get pid of this process and write the pid to a file before recording the start time
+      if (time < 0) {
+        String vmName = ManagementFactory.getRuntimeMXBean().getName();
+        int p = vmName.indexOf("@");
+        int pid = Integer.valueOf(vmName.substring(0, p));
+        try {
+          f.createNewFile();
+          PrintWriter pidWriter = new PrintWriter(f);
+          pidWriter.println(pid);
+          pidWriter.flush();
+          pidWriter.close();
+        } catch (IOException ioe) {
+          ioe.printStackTrace();
+        }
+      }
+      LOG.info("Output the process pid to pid.txt");
+
+      while (!firstCollecting) {
+        Thread.sleep(1);
+      }
+
       // first collection (before queries)
       LOG.info("First collection of metrics before experiment");
       String metricsBefore = collector.collectMetrics();
@@ -154,23 +183,6 @@ public class Main {
 
       // add a signal handler
       Signal.handle(new Signal("INT"), signal -> keepRunning = false);
-      File f = new File("pid.txt");
-
-      // get pid of this process and write the pid to a file before recording the start time
-      if (time < 0) {
-        String vmName = ManagementFactory.getRuntimeMXBean().getName();
-        int p = vmName.indexOf("@");
-        int pid = Integer.valueOf(vmName.substring(0, p));
-        try {
-          f.createNewFile();
-          PrintWriter pidWriter = new PrintWriter(f);
-          pidWriter.println(pid);
-          pidWriter.flush();
-          pidWriter.close();
-        } catch (IOException ioe) {
-          ioe.printStackTrace();
-        }
-      }
 
       // record start time
       long startTime = System.currentTimeMillis();
@@ -236,8 +248,12 @@ public class Main {
       outfiles.put("metrics_before", FileUtil.joinPath(outputDirectory, "metrics_before.json"));
       outfiles.put("metrics_after", FileUtil.joinPath(outputDirectory, "metrics_after.json"));
       outfiles.put("summary", FileUtil.joinPath(outputDirectory, "summary.json"));
-      ResultUploader.upload(
-          config.getUploadURL(), config.getUploadCode(), outfiles);
+      try {
+        ResultUploader.upload(
+                config.getUploadURL(), config.getUploadCode(), outfiles);
+      } catch (IOException ioe) {
+        LOG.warn("Failed to upload results from the controller");
+      }
     } else {
       LOG.warn("Empty upload URL. Skipping upload...");
     }

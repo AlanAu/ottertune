@@ -100,8 +100,8 @@ def aggregate_target_results(result_id):
     # this data in order to make a configuration recommendation (until we
     # implement a sampling technique to generate new training data).
     latest_pipeline_run = PipelineRun.objects.get_latest()
-
-    if latest_pipeline_run is None:
+    newest_result = Result.objects.get(pk=result_id)
+    if latest_pipeline_run is None or newest_result.session.tuning_session == 'randomly_generate':
         result = Result.objects.filter(pk=result_id)
         knobs_ = KnobCatalog.objects.filter(dbms=result[0].dbms, tunable=True)
         knobs_catalog = {k.name: k for k in knobs_}
@@ -117,7 +117,6 @@ def aggregate_target_results(result_id):
 
     # Aggregate all knob config results tried by the target so far in this
     # tuning session and this tuning workload.
-    newest_result = Result.objects.get(pk=result_id)
     target_results = Result.objects.filter(session=newest_result.session,
                                            dbms=newest_result.dbms,
                                            workload=newest_result.workload)
@@ -229,7 +228,7 @@ def configuration_recommendation(target_data):
 
     metric_meta = MetricCatalog.objects.get_metric_meta(newest_result.session.dbms,
                                                         newest_result.session.target_objective)
-    if metric_meta[target_objective] == '(less is better)':
+    if metric_meta[target_objective].improvement == '(less is better)':
         lessisbetter = True
     else:
         lessisbetter = False
@@ -338,7 +337,7 @@ def configuration_recommendation(target_data):
             col_max = X_scaled[:, i].max()
             if X_columnlabels[i] in knobs_mem_catalog:
                 X_mem[0][i] = mem_max * 1024 * 1024 * 1024  # mem_max GB
-                col_max = X_scaler.transform(X_mem)[0][i]
+                col_max = min(col_max, X_scaler.transform(X_mem)[0][i])
 
             # Set min value to the default value
             # FIXME: support multiple methods can be selected by users
@@ -364,7 +363,13 @@ def configuration_recommendation(target_data):
             # Tensorflow get broken if we use the training data points as
             # starting points for GPRGD. We add a small bias for the
             # starting points. GPR_EPS default value is 0.001
-            X_samples = np.vstack((X_samples, X_scaled[item[1]] + GPR_EPS))
+            # if the starting point is X_max, we minus a small bias to
+            # make sure it is within the range.
+            dist = sum(np.square(X_max - X_scaled[item[1]]))
+            if dist < 0.001:
+                X_samples = np.vstack((X_samples, X_scaled[item[1]] - abs(GPR_EPS)))
+            else:
+                X_samples = np.vstack((X_samples, X_scaled[item[1]] + abs(GPR_EPS)))
             i = i + 1
         except queue.Empty:
             break
@@ -447,6 +452,14 @@ def map_workload(target_data):
     assert len(unique_workloads) > 0
     workload_data = {}
     for unique_workload in unique_workloads:
+
+        workload_obj = Workload.objects.get(pk=unique_workload)
+        wkld_results = Result.objects.filter(workload=workload_obj)
+        if wkld_results.exists() is False:
+            # delete the workload
+            workload_obj.delete()
+            continue
+
         # Load knob & metric data for this workload
         knob_data = load_data_helper(pipeline_data, unique_workload, PipelineTaskType.KNOB_DATA)
 
@@ -487,6 +500,8 @@ def map_workload(target_data):
             'y_matrix': y_matrix,
             'rowlabels': rowlabels,
         }
+
+    assert len(workload_data) > 0
 
     # Stack all X & y matrices for preprocessing
     Xs = np.vstack([entry['X_matrix'] for entry in list(workload_data.values())])
@@ -541,10 +556,15 @@ def map_workload(target_data):
     # Find the best (minimum) score
     best_score = np.inf
     best_workload_id = None
+    # scores_info = {workload_id: (workload_name, score)}
+    scores_info = {}
     for workload_id, similarity_score in list(scores.items()):
+        workload_name = Workload.objects.get(pk=workload_id).name
         if similarity_score < best_score:
             best_score = similarity_score
             best_workload_id = workload_id
-    target_data['mapped_workload'] = (best_workload_id, best_score)
-    target_data['scores'] = scores
+            best_workload_name = workload_name
+        scores_info[workload_id] = (workload_name, similarity_score)
+    target_data['mapped_workload'] = (best_workload_id, best_workload_name, best_score)
+    target_data['scores'] = scores_info
     return target_data
